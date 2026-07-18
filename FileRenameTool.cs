@@ -13,9 +13,9 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("六朝声")]
 [assembly: AssemblyProduct("FileRenameTool")]
 [assembly: AssemblyCopyright("Copyright © 六朝声 2026")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
-[assembly: AssemblyInformationalVersion("2.0")]
+[assembly: AssemblyVersion("2.1.0.0")]
+[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyInformationalVersion("2.1")]
 
 namespace FileRenameTool
 {
@@ -52,6 +52,7 @@ namespace FileRenameTool
         private bool prefixSelectionByKeyboard;
         private string typeTextBeforeDropDown = String.Empty;
         private bool typeSelectionByKeyboard;
+        private bool isInitializing = true;
 
         private static readonly string[] BuiltInVersionTypes =
         {
@@ -62,45 +63,69 @@ namespace FileRenameTool
             "Clean Version"
         };
 
-        private static readonly Regex CopySuffixRegex = new Regex(
-            @"\s*[\(（]\d+[\)）]\s*$",
-            RegexOptions.Compiled);
+        private static readonly Lazy<Regex> CopySuffixRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(@"\s*[\(（]\d+[\)）]\s*$", RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex StandardNameRegex = new Regex(
-            @"^(?<base>.+)-(?<date>\d{8})-v(?<major>\d+)\.(?<minor>\d+)-(?<suffix>.+)$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> StandardNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<base>.+)-(?<date>\d{8})-v(?<major>\d+)\.(?<minor>\d+)-(?<suffix>.+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex LegacyStandardNameRegex = new Regex(
-            @"^(?<date>\d{8})-(?<base>.+)-v(?<major>\d+)\.(?<minor>\d+)-(?<suffix>.+)$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> LegacyStandardNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<date>\d{8})-(?<base>.+)-v(?<major>\d+)\.(?<minor>\d+)-(?<suffix>.+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex NoVersionNameRegex = new Regex(
-            @"^(?<base>.+)-(?<date>\d{8})-(?<suffix>.+)$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> NoVersionNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<base>.+)-(?<date>\d{8})-(?<suffix>.+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex LegacyNoVersionNameRegex = new Regex(
-            @"^(?<date>\d{8})-(?<base>.+)-(?<suffix>.+)$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> LegacyNoVersionNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<date>\d{8})-(?<base>.+)-(?<suffix>.+)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex GenericCurrentNameRegex = new Regex(
-            @"^(?<base>.+)-\d{8}-v\d+\.\d+-.+$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> GenericCurrentNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<base>.+)-\d{8}-v\d+\.\d+-.+$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex GenericLegacyNameRegex = new Regex(
-            @"^\d{8}-(?<base>.+)-v\d+\.\d+-.+$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> GenericLegacyNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^\d{8}-(?<base>.+)-v\d+\.\d+-.+$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex GenericVersionNameRegex = new Regex(
-            @"^(?<base>.+?)(?:-\d{8})?-v(?<major>\d+)\.(?<minor>\d+|x)(?:-.+)?$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Lazy<Regex> GenericVersionNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<base>.+?)(?:-\d{8})?-v(?<major>\d+)\.(?<minor>\d+|x)(?:-.+)?$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex LeadingDateRegex = new Regex(
-            @"^\d{8}-(?<base>.+)$",
-            RegexOptions.Compiled);
+        private static readonly Lazy<Regex> LeadingDateRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(@"^\d{8}-(?<base>.+)$", RegexOptions.CultureInvariant);
+        });
 
-        private static readonly Regex TrailingDateRegex = new Regex(
-            @"^(?<base>.+)-\d{8}$",
-            RegexOptions.Compiled);
+        private static readonly Lazy<Regex> TrailingDateRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(@"^(?<base>.+)-\d{8}$", RegexOptions.CultureInvariant);
+        });
 
         private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
         private static readonly Color PaperColor = Color.FromArgb(247, 249, 252);
@@ -114,6 +139,9 @@ namespace FileRenameTool
 
         public MainForm()
         {
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer, true);
+            SuspendLayout();
             Text = "FileRenameTool";
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(1020, 640);
@@ -141,6 +169,7 @@ namespace FileRenameTool
                 Padding = new Padding(24, 14, 24, 10),
                 BackColor = MistBlueColor
             };
+            topPanel.SuspendLayout();
 
             var companyLabel = new Label
             {
@@ -400,6 +429,7 @@ namespace FileRenameTool
                 Padding = new Padding(16, 12, 16, 12),
                 BackColor = Color.White
             };
+            bottomPanel.SuspendLayout();
 
             summary = new Label
             {
@@ -457,6 +487,14 @@ namespace FileRenameTool
             };
 
             LoadSettings();
+            topPanel.ResumeLayout(false);
+            topPanel.PerformLayout();
+            bottomPanel.ResumeLayout(false);
+            bottomPanel.PerformLayout();
+            ResumeLayout(true);
+            isInitializing = false;
+            RefreshPreview();
+            ResizeFileListColumns();
         }
 
         private static Button CreateButton(string text, int left, int top, int width)
@@ -487,6 +525,7 @@ namespace FileRenameTool
 
         private void ResizeFileListColumns()
         {
+            if (isInitializing) return;
             if (fileList == null || fileList.Columns.Count < 3)
             {
                 return;
@@ -885,11 +924,11 @@ namespace FileRenameTool
                     if (includeVersion.Checked)
                         IncrementVersion(ref major, ref minor);
                 }
-                else if (GenericVersionNameRegex.IsMatch(stem))
+                else if (GenericVersionNameRegex.Value.IsMatch(stem))
                 {
-                    var genericVersion = GenericVersionNameRegex.Match(stem);
+                    var genericVersion = GenericVersionNameRegex.Value.Match(stem);
                     baseName = genericVersion.Groups["base"].Value.Trim();
-                    var leadingDate = LeadingDateRegex.Match(baseName);
+                    var leadingDate = LeadingDateRegex.Value.Match(baseName);
                     if (leadingDate.Success)
                         baseName = leadingDate.Groups["base"].Value.Trim();
                     major = ParsePositiveInt(genericVersion.Groups["major"].Value, 1);
@@ -1042,9 +1081,9 @@ namespace FileRenameTool
             }
             else
             {
-                var genericCurrent = GenericCurrentNameRegex.Match(cleanedStem);
-                var genericLegacy = GenericLegacyNameRegex.Match(cleanedStem);
-                var genericVersion = GenericVersionNameRegex.Match(cleanedStem);
+                var genericCurrent = GenericCurrentNameRegex.Value.Match(cleanedStem);
+                var genericLegacy = GenericLegacyNameRegex.Value.Match(cleanedStem);
+                var genericVersion = GenericVersionNameRegex.Value.Match(cleanedStem);
 
                 if (genericCurrent.Success)
                     baseName = genericCurrent.Groups["base"].Value;
@@ -1056,14 +1095,14 @@ namespace FileRenameTool
                     baseName = parsedBase;
                 else
                 {
-                    var trailingDate = TrailingDateRegex.Match(cleanedStem);
+                    var trailingDate = TrailingDateRegex.Value.Match(cleanedStem);
                     if (trailingDate.Success)
                         baseName = trailingDate.Groups["base"].Value;
                 }
             }
 
             // 兼容“日期-文件名-v1.X”这类旧式或不完整名称。
-            var leadingDate = LeadingDateRegex.Match(baseName.Trim());
+            var leadingDate = LeadingDateRegex.Value.Match(baseName.Trim());
             if (leadingDate.Success)
                 baseName = leadingDate.Groups["base"].Value;
 
@@ -1073,8 +1112,8 @@ namespace FileRenameTool
         private static bool TryParseStandardName(string stem, out string baseName,
             out int major, out int minor)
         {
-            var match = StandardNameRegex.Match(stem);
-            if (!match.Success) match = LegacyStandardNameRegex.Match(stem);
+            var match = StandardNameRegex.Value.Match(stem);
+            if (!match.Success) match = LegacyStandardNameRegex.Value.Match(stem);
 
             if (!match.Success)
             {
@@ -1092,8 +1131,8 @@ namespace FileRenameTool
 
         private static bool TryParseNoVersionName(string stem, out string baseName)
         {
-            var match = NoVersionNameRegex.Match(stem);
-            if (!match.Success) match = LegacyNoVersionNameRegex.Match(stem);
+            var match = NoVersionNameRegex.Value.Match(stem);
+            if (!match.Success) match = LegacyNoVersionNameRegex.Value.Match(stem);
 
             if (!match.Success)
             {
@@ -1108,9 +1147,9 @@ namespace FileRenameTool
         private static string RemoveCopySuffixes(string stem)
         {
             var result = stem.Trim();
-            while (CopySuffixRegex.IsMatch(result))
+            while (CopySuffixRegex.Value.IsMatch(result))
             {
-                result = CopySuffixRegex.Replace(result, String.Empty).Trim();
+                result = CopySuffixRegex.Value.Replace(result, String.Empty).Trim();
             }
             return result;
         }
@@ -1133,6 +1172,7 @@ namespace FileRenameTool
 
         private void RefreshPreview()
         {
+            if (isInitializing) return;
             if (fileList == null) return;
 
             var selectedPaths = new HashSet<string>(GetSelectedSourcePaths(),
