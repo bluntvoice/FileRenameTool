@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>FileRenameTool 横向蓝色格式刷</title>
+  <path d="M31 27h25a5 5 0 0 1 0 10H31z" fill="#0B3A82"/>
+  <path d="m16 20 18 5v14l-18 5z" fill="#93C5FD" stroke="#0B3A82" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>
