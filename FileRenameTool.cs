@@ -42,6 +42,7 @@ namespace FileRenameTool
         private readonly TextBox manualBaseName;
         private readonly Button applyBaseNameButton;
         private readonly Button resetBaseNameButton;
+        private Form aboutDialog;
         private readonly List<string> sourceFiles = new List<string>();
         private readonly List<string> prefixHistory = new List<string>();
         private readonly List<string> customTypeHistory = new List<string>();
@@ -485,6 +486,15 @@ namespace FileRenameTool
             {
                 SaveSettings(companyPrefix.Text.Trim());
             };
+            FormClosed += delegate
+            {
+                if (aboutDialog != null && !aboutDialog.IsDisposed)
+                    aboutDialog.Dispose();
+            };
+            Shown += delegate
+            {
+                BeginInvoke(new MethodInvoker(PrepareAboutDialog));
+            };
 
             LoadSettings();
             topPanel.ResumeLayout(false);
@@ -655,102 +665,116 @@ namespace FileRenameTool
 
         private void ShowAboutDialog()
         {
-            var version = FileVersionInfo.GetVersionInfo(
-                Assembly.GetExecutingAssembly().Location).FileVersion;
-            Version parsedVersion;
-            var displayVersion = Version.TryParse(version, out parsedVersion)
-                ? String.Format("v{0}.{1}", parsedVersion.Major, parsedVersion.Minor)
-                : "v" + version;
+            PrepareAboutDialog();
+            aboutDialog.DialogResult = DialogResult.None;
+            aboutDialog.ShowDialog(this);
+        }
 
-            using (var dialog = new Form())
+        private void PrepareAboutDialog()
+        {
+            if (aboutDialog != null && !aboutDialog.IsDisposed) return;
+
+            var version = Assembly.GetExecutingAssembly().GetName().Version;
+            var displayVersion = version == null
+                ? "v2.1"
+                : String.Format("v{0}.{1}", version.Major, version.Minor);
+            var dialog = new Form();
+            dialog.SuspendLayout();
+            dialog.Text = "关于 FileRenameTool";
+            dialog.StartPosition = FormStartPosition.CenterParent;
+            dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+            dialog.MaximizeBox = false;
+            dialog.MinimizeBox = false;
+            dialog.ShowInTaskbar = false;
+            dialog.ClientSize = new Size(560, 262);
+            dialog.BackColor = PaperColor;
+            dialog.ForeColor = InkBlueColor;
+            dialog.Font = new Font("Microsoft YaHei UI", 9.5F);
+            dialog.Icon = Icon;
+
+            var titleLabel = new Label
             {
-                dialog.Text = "关于 FileRenameTool";
-                dialog.StartPosition = FormStartPosition.CenterParent;
-                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
-                dialog.MaximizeBox = false;
-                dialog.MinimizeBox = false;
-                dialog.ShowInTaskbar = false;
-                dialog.ClientSize = new Size(560, 262);
-                dialog.BackColor = PaperColor;
-                dialog.ForeColor = InkBlueColor;
-                dialog.Font = new Font("Microsoft YaHei UI", 9.5F);
-                dialog.Icon = Icon;
-
-                var titleLabel = new Label
+                AutoSize = true,
+                Location = new Point(28, 25),
+                Text = "FileRenameTool",
+                Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold),
+                ForeColor = InkBlueColor
+            };
+            var descriptionLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(30, 59),
+                Text = "轻量、可预览的 Windows 文件整理工具",
+                ForeColor = GrayBlueColor
+            };
+            var versionLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(27, 105),
+                Text = "当前版本：" + displayVersion,
+                ForeColor = InkBlueColor
+            };
+            var authorLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(27, 136),
+                Text = "作者：六朝声",
+                ForeColor = InkBlueColor
+            };
+            var repositoryLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(27, 167),
+                Text = "仓库：",
+                ForeColor = InkBlueColor
+            };
+            var repositoryLink = new LinkLabel
+            {
+                AutoSize = true,
+                Location = new Point(82, 167),
+                Text = "https://github.com/bluntvoice/FileRenameTool",
+                LinkColor = DeepBlueColor,
+                ActiveLinkColor = InkBlueColor
+            };
+            repositoryLink.LinkClicked += delegate
+            {
+                try
                 {
-                    AutoSize = true,
-                    Location = new Point(28, 25),
-                    Text = "FileRenameTool",
-                    Font = new Font("Microsoft YaHei UI", 15F, FontStyle.Bold),
-                    ForeColor = InkBlueColor
-                };
-                var descriptionLabel = new Label
-                {
-                    AutoSize = true,
-                    Location = new Point(30, 59),
-                    Text = "轻量、可预览的 Windows 文件整理工具",
-                    ForeColor = GrayBlueColor
-                };
-                var versionLabel = new Label
-                {
-                    AutoSize = true,
-                    Location = new Point(27, 105),
-                    Text = "当前版本：" + displayVersion,
-                    ForeColor = InkBlueColor
-                };
-                var authorLabel = new Label
-                {
-                    AutoSize = true,
-                    Location = new Point(27, 136),
-                    Text = "作者：六朝声",
-                    ForeColor = InkBlueColor
-                };
-                var repositoryLabel = new Label
-                {
-                    AutoSize = true,
-                    Location = new Point(27, 167),
-                    Text = "仓库：",
-                    ForeColor = InkBlueColor
-                };
-                var repositoryLink = new LinkLabel
-                {
-                    AutoSize = true,
-                    Location = new Point(82, 167),
-                    Text = "https://github.com/bluntvoice/FileRenameTool",
-                    LinkColor = DeepBlueColor,
-                    ActiveLinkColor = InkBlueColor
-                };
-                repositoryLink.LinkClicked += delegate
-                {
-                    try
+                    Process.Start(new ProcessStartInfo(repositoryLink.Text)
                     {
-                        Process.Start(new ProcessStartInfo(repositoryLink.Text)
-                        {
-                            UseShellExecute = true
-                        });
-                    }
-                    catch
-                    {
-                        Clipboard.SetText(repositoryLink.Text);
-                        MessageBox.Show(dialog, "仓库地址已复制到剪贴板。", "无法打开浏览器",
-                            MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                };
+                        UseShellExecute = true
+                    });
+                }
+                catch
+                {
+                    Clipboard.SetText(repositoryLink.Text);
+                    MessageBox.Show(dialog, "仓库地址已复制到剪贴板。", "无法打开浏览器",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            };
 
-                var closeButton = CreateButton("关闭", 458, 210, 76);
-                closeButton.Height = 38;
-                closeButton.DialogResult = DialogResult.OK;
-                dialog.Controls.Add(titleLabel);
-                dialog.Controls.Add(descriptionLabel);
-                dialog.Controls.Add(versionLabel);
-                dialog.Controls.Add(authorLabel);
-                dialog.Controls.Add(repositoryLabel);
-                dialog.Controls.Add(repositoryLink);
-                dialog.Controls.Add(closeButton);
-                dialog.AcceptButton = closeButton;
-                dialog.CancelButton = closeButton;
-                dialog.ShowDialog(this);
+            var closeButton = CreateButton("关闭", 458, 210, 76);
+            closeButton.Height = 38;
+            closeButton.DialogResult = DialogResult.OK;
+            dialog.Controls.Add(titleLabel);
+            dialog.Controls.Add(descriptionLabel);
+            dialog.Controls.Add(versionLabel);
+            dialog.Controls.Add(authorLabel);
+            dialog.Controls.Add(repositoryLabel);
+            dialog.Controls.Add(repositoryLink);
+            dialog.Controls.Add(closeButton);
+            dialog.AcceptButton = closeButton;
+            dialog.CancelButton = closeButton;
+            dialog.ResumeLayout(false);
+            dialog.PerformLayout();
+
+            // 预先创建窗口和子控件句柄，避免第一次点击“关于”时才加载字体和链接控件。
+            var dialogHandle = dialog.Handle;
+            foreach (Control control in dialog.Controls)
+            {
+                var controlHandle = control.Handle;
             }
+            aboutDialog = dialog;
         }
 
         private List<string> GetSelectedSourcePaths()
