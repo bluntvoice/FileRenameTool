@@ -13,9 +13,9 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("六朝声")]
 [assembly: AssemblyProduct("FileRenameTool")]
 [assembly: AssemblyCopyright("Copyright © 六朝声 2026")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
-[assembly: AssemblyInformationalVersion("2.1")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyInformationalVersion("2.2")]
 
 namespace FileRenameTool
 {
@@ -34,6 +34,7 @@ namespace FileRenameTool
         private readonly ComboBox companyPrefix;
         private readonly CheckBox includeVersion;
         private readonly CheckBox onlyKeepFileName;
+        private readonly CheckBox onlyKeepVersion;
         private readonly Label dropHint;
         private readonly Label summary;
         private readonly Button renameButton;
@@ -42,6 +43,9 @@ namespace FileRenameTool
         private readonly TextBox manualBaseName;
         private readonly Button applyBaseNameButton;
         private readonly Button resetBaseNameButton;
+        private NotifyIcon trayIcon;
+        private ContextMenuStrip trayMenu;
+        private Timer trayInitializationTimer;
         private Form aboutDialog;
         private readonly List<string> sourceFiles = new List<string>();
         private readonly List<string> prefixHistory = new List<string>();
@@ -54,6 +58,9 @@ namespace FileRenameTool
         private string typeTextBeforeDropDown = String.Empty;
         private bool typeSelectionByKeyboard;
         private bool isInitializing = true;
+        private bool isUpdatingCleanupMode;
+        private bool isExiting;
+        private bool trayHintShown;
 
         private static readonly string[] BuiltInVersionTypes =
         {
@@ -300,17 +307,52 @@ namespace FileRenameTool
             onlyKeepFileName = new CheckBox
             {
                 AutoSize = true,
-                Text = "仅保留文件名（清除日期、版本、公司简称、类型和 (1)(2)）",
+                Text = "仅保留文件名",
                 Location = new Point(150, 140),
                 ForeColor = InkBlueColor
             };
+
+            onlyKeepVersion = new CheckBox
+            {
+                AutoSize = true,
+                Text = "仅保留版本号",
+                Location = new Point(286, 140),
+                ForeColor = InkBlueColor
+            };
+
+            var cleanupHint = new Label
+            {
+                AutoSize = true,
+                ForeColor = GrayBlueColor,
+                Text = "清除日期、简称、类型和复制标记",
+                Location = new Point(422, 141)
+            };
+
+            Action updateCleanupControls = delegate
+            {
+                var cleanupMode = onlyKeepFileName.Checked || onlyKeepVersion.Checked;
+                companyPrefix.Enabled = !cleanupMode;
+                versionType.Enabled = !cleanupMode;
+                includeVersion.Enabled = !cleanupMode;
+                rememberButton.Enabled = !cleanupMode;
+                rememberTypeButton.Enabled = !cleanupMode;
+            };
             onlyKeepFileName.CheckedChanged += delegate
             {
-                companyPrefix.Enabled = !onlyKeepFileName.Checked;
-                versionType.Enabled = !onlyKeepFileName.Checked;
-                includeVersion.Enabled = !onlyKeepFileName.Checked;
-                rememberButton.Enabled = !onlyKeepFileName.Checked;
-                rememberTypeButton.Enabled = !onlyKeepFileName.Checked;
+                if (isUpdatingCleanupMode) return;
+                isUpdatingCleanupMode = true;
+                if (onlyKeepFileName.Checked) onlyKeepVersion.Checked = false;
+                updateCleanupControls();
+                isUpdatingCleanupMode = false;
+                RefreshPreview();
+            };
+            onlyKeepVersion.CheckedChanged += delegate
+            {
+                if (isUpdatingCleanupMode) return;
+                isUpdatingCleanupMode = true;
+                if (onlyKeepVersion.Checked) onlyKeepFileName.Checked = false;
+                updateCleanupControls();
+                isUpdatingCleanupMode = false;
                 RefreshPreview();
             };
 
@@ -374,6 +416,8 @@ namespace FileRenameTool
             topPanel.Controls.Add(dropHint);
             topPanel.Controls.Add(includeVersion);
             topPanel.Controls.Add(onlyKeepFileName);
+            topPanel.Controls.Add(onlyKeepVersion);
+            topPanel.Controls.Add(cleanupHint);
             topPanel.Controls.Add(manualBaseNameLabel);
             topPanel.Controls.Add(manualBaseName);
             topPanel.Controls.Add(applyBaseNameButton);
@@ -389,6 +433,8 @@ namespace FileRenameTool
                 rememberTypeButton.Left = versionType.Right + 12;
                 typeHint.Left = rememberTypeButton.Right + 12;
                 onlyKeepFileName.Left = includeVersion.Right + 18;
+                onlyKeepVersion.Left = onlyKeepFileName.Right + 18;
+                cleanupHint.Left = onlyKeepVersion.Right + 18;
                 manualBaseName.Left = manualBaseNameLabel.Right + 8;
                 applyBaseNameButton.Left = manualBaseName.Right + 12;
                 resetBaseNameButton.Left = applyBaseNameButton.Right + 12;
@@ -482,18 +528,45 @@ namespace FileRenameTool
 
             DragEnter += DragEnterFiles;
             DragDrop += DragDropFiles;
-            FormClosing += delegate
+            FormClosing += delegate(object sender, FormClosingEventArgs e)
             {
                 SaveSettings(companyPrefix.Text.Trim());
+                if (!isExiting && e.CloseReason == CloseReason.UserClosing)
+                {
+                    e.Cancel = true;
+                    StopTrayInitializationTimer();
+                    PrepareTrayIcon();
+                    Hide();
+                    if (!trayHintShown)
+                    {
+                        trayIcon.ShowBalloonTip(2500, "FileRenameTool 正在后台运行",
+                            "双击托盘图标可重新打开主界面。", ToolTipIcon.Info);
+                        trayHintShown = true;
+                    }
+                }
             };
             FormClosed += delegate
             {
                 if (aboutDialog != null && !aboutDialog.IsDisposed)
                     aboutDialog.Dispose();
+                StopTrayInitializationTimer();
+                if (trayIcon != null)
+                {
+                    trayIcon.Visible = false;
+                    trayIcon.Dispose();
+                }
+                if (trayMenu != null) trayMenu.Dispose();
             };
             Shown += delegate
             {
                 BeginInvoke(new MethodInvoker(PrepareAboutDialog));
+                trayInitializationTimer = new Timer { Interval = 800 };
+                trayInitializationTimer.Tick += delegate
+                {
+                    StopTrayInitializationTimer();
+                    PrepareTrayIcon();
+                };
+                trayInitializationTimer.Start();
             };
 
             LoadSettings();
@@ -670,13 +743,60 @@ namespace FileRenameTool
             aboutDialog.ShowDialog(this);
         }
 
+        private void ShowMainWindow()
+        {
+            if (!Visible) Show();
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+            Activate();
+            BringToFront();
+        }
+
+        private void ExitApplication()
+        {
+            isExiting = true;
+            if (trayIcon != null) trayIcon.Visible = false;
+            Close();
+        }
+
+        private void PrepareTrayIcon()
+        {
+            if (trayIcon != null) return;
+
+            trayMenu = new ContextMenuStrip();
+            var openMenuItem = new ToolStripMenuItem("打开主界面");
+            openMenuItem.Click += delegate { ShowMainWindow(); };
+            var exitMenuItem = new ToolStripMenuItem("退出");
+            exitMenuItem.Click += delegate { ExitApplication(); };
+            trayMenu.Items.Add(openMenuItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add(exitMenuItem);
+
+            trayIcon = new NotifyIcon
+            {
+                Icon = Icon,
+                Text = "FileRenameTool - 后台运行",
+                ContextMenuStrip = trayMenu,
+                Visible = true
+            };
+            trayIcon.DoubleClick += delegate { ShowMainWindow(); };
+        }
+
+        private void StopTrayInitializationTimer()
+        {
+            if (trayInitializationTimer == null) return;
+            trayInitializationTimer.Stop();
+            trayInitializationTimer.Dispose();
+            trayInitializationTimer = null;
+        }
+
         private void PrepareAboutDialog()
         {
             if (aboutDialog != null && !aboutDialog.IsDisposed) return;
 
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var displayVersion = version == null
-                ? "v2.1"
+                ? "v2.2"
                 : String.Format("v{0}.{1}", version.Major, version.Minor);
             var dialog = new Form();
             dialog.SuspendLayout();
@@ -882,7 +1002,9 @@ namespace FileRenameTool
         private List<RenamePreview> BuildPreviews()
         {
             if (onlyKeepFileName.Checked)
-                return BuildCleanNamePreviews();
+                return BuildCleanupPreviews(false);
+            if (onlyKeepVersion.Checked)
+                return BuildCleanupPreviews(true);
 
             var previews = new List<RenamePreview>();
             var reservedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1020,7 +1142,7 @@ namespace FileRenameTool
             return previews;
         }
 
-        private List<RenamePreview> BuildCleanNamePreviews()
+        private List<RenamePreview> BuildCleanupPreviews(bool keepVersion)
         {
             var previews = new List<RenamePreview>();
             var reservedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1042,14 +1164,25 @@ namespace FileRenameTool
                 var directory = Path.GetDirectoryName(sourcePath);
                 var extension = Path.GetExtension(sourcePath);
                 var stem = RemoveCopySuffixes(Path.GetFileNameWithoutExtension(sourcePath));
-                var baseName = ExtractBaseNameForCleanup(stem);
+                string baseName;
+                string versionText;
+                if (keepVersion)
+                    ExtractBaseNameAndVersionForCleanup(stem, out baseName, out versionText);
+                else
+                {
+                    baseName = ExtractBaseNameForCleanup(stem);
+                    versionText = String.Empty;
+                }
 
                 baseName = GetManualBaseName(sourcePath, baseName);
 
                 baseName = RemoveCopySuffixes(baseName.Trim());
                 if (String.IsNullOrWhiteSpace(baseName)) baseName = "未命名文件";
 
-                var targetPath = Path.Combine(directory, baseName + extension);
+                var targetName = keepVersion
+                    ? String.Format("{0}-{1}{2}", baseName, versionText, extension)
+                    : baseName + extension;
+                var targetPath = Path.Combine(directory, targetName);
                 var isSamePath = String.Equals(sourcePath, targetPath,
                     StringComparison.OrdinalIgnoreCase);
                 var occupied = !isSamePath && File.Exists(targetPath);
@@ -1074,7 +1207,7 @@ namespace FileRenameTool
                 }
                 else
                 {
-                    status = "等待清理文件名";
+                    status = keepVersion ? "等待保留版本号" : "等待清理文件名";
                     canRename = true;
                 }
 
@@ -1089,6 +1222,30 @@ namespace FileRenameTool
             }
 
             return previews;
+        }
+
+        private static void ExtractBaseNameAndVersionForCleanup(string stem,
+            out string baseName, out string versionText)
+        {
+            var cleanedStem = RemoveCopySuffixes(stem);
+            var match = GenericVersionNameRegex.Value.Match(cleanedStem);
+            if (match.Success)
+            {
+                baseName = match.Groups["base"].Value.Trim();
+                var leadingDate = LeadingDateRegex.Value.Match(baseName);
+                if (leadingDate.Success)
+                    baseName = leadingDate.Groups["base"].Value.Trim();
+
+                var minor = match.Groups["minor"].Value;
+                if (String.Equals(minor, "x", StringComparison.OrdinalIgnoreCase))
+                    minor = "X";
+                versionText = String.Format("v{0}.{1}",
+                    match.Groups["major"].Value, minor);
+                return;
+            }
+
+            baseName = ExtractBaseNameForCleanup(cleanedStem);
+            versionText = "v1.0";
         }
 
         private static string ExtractBaseNameForCleanup(string stem)
@@ -1226,7 +1383,9 @@ namespace FileRenameTool
                 ? "尚未添加文件，可拖入文件或点击“添加文件”"
                 : onlyKeepFileName.Checked
                     ? String.Format("共 {0} 个文件；将仅保留原始文件名和扩展名", sourceFiles.Count)
-                    : includeVersion.Checked
+                    : onlyKeepVersion.Checked
+                        ? String.Format("共 {0} 个文件；将保留文件名、版本号和扩展名", sourceFiles.Count)
+                        : includeVersion.Checked
                         ? String.Format("共 {0} 个文件；包含版本号，重名时自动递增版本", sourceFiles.Count)
                         : String.Format("共 {0} 个文件；不含版本号，将更新已有日期和类型", sourceFiles.Count);
             UpdateRenameButtonState();
@@ -1323,7 +1482,7 @@ namespace FileRenameTool
 
         private bool ValidateNamingInputs()
         {
-            if (onlyKeepFileName.Checked) return true;
+            if (onlyKeepFileName.Checked || onlyKeepVersion.Checked) return true;
 
             var selectedPrefix = companyPrefix.Text.Trim();
             if (selectedPrefix.IndexOfAny(InvalidFileNameChars) >= 0)

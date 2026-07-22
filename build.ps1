@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$version = 'v2.1'
+$version = 'v2.2'
 $sourcePath = Join-Path $PSScriptRoot 'FileRenameTool.cs'
 $iconPath = Join-Path $PSScriptRoot 'assets\brush.ico'
 $readmePath = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.md' |
