@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
+using System.IO.Compression;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,9 +15,9 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("六朝声")]
 [assembly: AssemblyProduct("FileRenameTool")]
 [assembly: AssemblyCopyright("Copyright © 六朝声 2026")]
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
-[assembly: AssemblyInformationalVersion("2.2")]
+[assembly: AssemblyVersion("2.3.0.0")]
+[assembly: AssemblyFileVersion("2.3.0.0")]
+[assembly: AssemblyInformationalVersion("2.3")]
 
 namespace FileRenameTool
 {
@@ -27,6 +29,13 @@ namespace FileRenameTool
         public bool CanRename;
     }
 
+    internal enum CleanupMode
+    {
+        FileNameOnly,
+        FileNameAndVersion,
+        FileNameDateAndVersion
+    }
+
     internal sealed class MainForm : Form
     {
         private readonly ListView fileList;
@@ -35,14 +44,17 @@ namespace FileRenameTool
         private readonly CheckBox includeVersion;
         private readonly CheckBox onlyKeepFileName;
         private readonly CheckBox onlyKeepVersion;
+        private readonly CheckBox onlyKeepDateVersion;
         private readonly Label dropHint;
         private readonly Label summary;
         private readonly Button renameButton;
         private readonly Button saveCopyButton;
         private readonly Button clearReadOnlyButton;
+        private readonly Button topMostButton;
         private readonly TextBox manualBaseName;
         private readonly Button applyBaseNameButton;
         private readonly Button resetBaseNameButton;
+        private readonly ToolTip toolTip = new ToolTip();
         private NotifyIcon trayIcon;
         private ContextMenuStrip trayMenu;
         private Timer trayInitializationTimer;
@@ -125,6 +137,20 @@ namespace FileRenameTool
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         });
 
+        private static readonly Lazy<Regex> DateVersionNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<base>.+)-(?<date>\d{8})-v(?<major>\d+)\.(?<minor>\d+|x)(?:-.+)?$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
+
+        private static readonly Lazy<Regex> LegacyDateVersionNameRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"^(?<date>\d{8})-(?<base>.+)-v(?<major>\d+)\.(?<minor>\d+|x)(?:-.+)?$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        });
+
         private static readonly Lazy<Regex> LeadingDateRegex = new Lazy<Regex>(delegate
         {
             return new Regex(@"^\d{8}-(?<base>.+)$", RegexOptions.CultureInvariant);
@@ -178,6 +204,19 @@ namespace FileRenameTool
                 BackColor = MistBlueColor
             };
             topPanel.SuspendLayout();
+
+            topMostButton = CreateButton(String.Empty, 0, 14, 38);
+            topMostButton.Size = new Size(38, 34);
+            topMostButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            topMostButton.AccessibleName = "保持窗口置顶";
+            topMostButton.TabStop = true;
+            topMostButton.Click += delegate
+            {
+                TopMost = !TopMost;
+                UpdateTopMostButtonAppearance();
+            };
+            topMostButton.Paint += TopMostButton_Paint;
+            toolTip.SetToolTip(topMostButton, "保持窗口置顶");
 
             var companyLabel = new Label
             {
@@ -281,6 +320,9 @@ namespace FileRenameTool
             saveCopyButton.Click += SaveCopyButton_Click;
             StyleAccentButton(saveCopyButton);
 
+            var createDocxButton = CreateButton("新建空白 DOCX", 456, 96, 124);
+            createDocxButton.Click += CreateBlankDocxButton_Click;
+
             clearReadOnlyButton = CreateButton("仅解除只读", 0, 17, 112);
             clearReadOnlyButton.Height = 38;
             clearReadOnlyButton.Enabled = false;
@@ -291,7 +333,7 @@ namespace FileRenameTool
                 AutoSize = true,
                 ForeColor = GrayBlueColor,
                 Text = "可将一个或多个文件直接拖入下方区域",
-                Location = new Point(576, 103)
+                Location = new Point(596, 103)
             };
 
             includeVersion = new CheckBox
@@ -320,17 +362,26 @@ namespace FileRenameTool
                 ForeColor = InkBlueColor
             };
 
+            onlyKeepDateVersion = new CheckBox
+            {
+                AutoSize = true,
+                Text = "仅保留文件名、日期和版本号",
+                Location = new Point(422, 140),
+                ForeColor = InkBlueColor
+            };
+
             var cleanupHint = new Label
             {
                 AutoSize = true,
                 ForeColor = GrayBlueColor,
-                Text = "清除日期、简称、类型和复制标记",
-                Location = new Point(422, 141)
+                Text = "三个清理模式互斥",
+                Location = new Point(650, 141)
             };
 
             Action updateCleanupControls = delegate
             {
-                var cleanupMode = onlyKeepFileName.Checked || onlyKeepVersion.Checked;
+                var cleanupMode = onlyKeepFileName.Checked || onlyKeepVersion.Checked ||
+                    onlyKeepDateVersion.Checked;
                 companyPrefix.Enabled = !cleanupMode;
                 versionType.Enabled = !cleanupMode;
                 includeVersion.Enabled = !cleanupMode;
@@ -341,7 +392,11 @@ namespace FileRenameTool
             {
                 if (isUpdatingCleanupMode) return;
                 isUpdatingCleanupMode = true;
-                if (onlyKeepFileName.Checked) onlyKeepVersion.Checked = false;
+                if (onlyKeepFileName.Checked)
+                {
+                    onlyKeepVersion.Checked = false;
+                    onlyKeepDateVersion.Checked = false;
+                }
                 updateCleanupControls();
                 isUpdatingCleanupMode = false;
                 RefreshPreview();
@@ -350,7 +405,24 @@ namespace FileRenameTool
             {
                 if (isUpdatingCleanupMode) return;
                 isUpdatingCleanupMode = true;
-                if (onlyKeepVersion.Checked) onlyKeepFileName.Checked = false;
+                if (onlyKeepVersion.Checked)
+                {
+                    onlyKeepFileName.Checked = false;
+                    onlyKeepDateVersion.Checked = false;
+                }
+                updateCleanupControls();
+                isUpdatingCleanupMode = false;
+                RefreshPreview();
+            };
+            onlyKeepDateVersion.CheckedChanged += delegate
+            {
+                if (isUpdatingCleanupMode) return;
+                isUpdatingCleanupMode = true;
+                if (onlyKeepDateVersion.Checked)
+                {
+                    onlyKeepFileName.Checked = false;
+                    onlyKeepVersion.Checked = false;
+                }
                 updateCleanupControls();
                 isUpdatingCleanupMode = false;
                 RefreshPreview();
@@ -413,16 +485,19 @@ namespace FileRenameTool
             topPanel.Controls.Add(removeButton);
             topPanel.Controls.Add(clearButton);
             topPanel.Controls.Add(saveCopyButton);
+            topPanel.Controls.Add(createDocxButton);
             topPanel.Controls.Add(dropHint);
             topPanel.Controls.Add(includeVersion);
             topPanel.Controls.Add(onlyKeepFileName);
             topPanel.Controls.Add(onlyKeepVersion);
+            topPanel.Controls.Add(onlyKeepDateVersion);
             topPanel.Controls.Add(cleanupHint);
             topPanel.Controls.Add(manualBaseNameLabel);
             topPanel.Controls.Add(manualBaseName);
             topPanel.Controls.Add(applyBaseNameButton);
             topPanel.Controls.Add(resetBaseNameButton);
             topPanel.Controls.Add(manualNameHint);
+            topPanel.Controls.Add(topMostButton);
             topPanel.Layout += delegate
             {
                 // 使用控件实际宽度排布，避免高 DPI 或字体缩放后标签与输入框互相遮挡。
@@ -434,11 +509,13 @@ namespace FileRenameTool
                 typeHint.Left = rememberTypeButton.Right + 12;
                 onlyKeepFileName.Left = includeVersion.Right + 18;
                 onlyKeepVersion.Left = onlyKeepFileName.Right + 18;
-                cleanupHint.Left = onlyKeepVersion.Right + 18;
+                onlyKeepDateVersion.Left = onlyKeepVersion.Right + 18;
+                cleanupHint.Left = onlyKeepDateVersion.Right + 18;
                 manualBaseName.Left = manualBaseNameLabel.Right + 8;
                 applyBaseNameButton.Left = manualBaseName.Right + 12;
                 resetBaseNameButton.Left = applyBaseNameButton.Right + 12;
                 manualNameHint.Left = resetBaseNameButton.Right + 12;
+                topMostButton.Left = topPanel.ClientSize.Width - topMostButton.Width - 24;
             };
 
             fileList = new ListView
@@ -556,6 +633,7 @@ namespace FileRenameTool
                     trayIcon.Dispose();
                 }
                 if (trayMenu != null) trayMenu.Dispose();
+                toolTip.Dispose();
             };
             Shown += delegate
             {
@@ -576,6 +654,7 @@ namespace FileRenameTool
             bottomPanel.PerformLayout();
             ResumeLayout(true);
             isInitializing = false;
+            UpdateTopMostButtonAppearance();
             RefreshPreview();
             ResizeFileListColumns();
         }
@@ -606,6 +685,63 @@ namespace FileRenameTool
             button.FlatAppearance.BorderColor = DeepBlueColor;
         }
 
+        private void UpdateTopMostButtonAppearance()
+        {
+            topMostButton.BackColor = TopMost ? PaleBlueColor : Color.White;
+            topMostButton.FlatAppearance.BorderColor = TopMost ? DeepBlueColor : BorderColor;
+            topMostButton.AccessibleDescription = TopMost ? "窗口当前保持置顶" : "窗口当前未置顶";
+            toolTip.SetToolTip(topMostButton, TopMost ? "取消窗口置顶" : "保持窗口置顶");
+            topMostButton.Invalidate();
+        }
+
+        private void TopMostButton_Paint(object sender, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var scale = Math.Min(
+                Math.Max(1F, (topMostButton.ClientSize.Width - 12F) / 24F),
+                Math.Max(1F, (topMostButton.ClientSize.Height - 10F) / 24F));
+            var offsetX = (topMostButton.ClientSize.Width - 24F * scale) / 2F;
+            var offsetY = (topMostButton.ClientSize.Height - 24F * scale) / 2F;
+            var state = e.Graphics.Save();
+            e.Graphics.TranslateTransform(offsetX, offsetY);
+            e.Graphics.ScaleTransform(scale, scale);
+            var color = TopMost ? DeepBlueColor : GrayBlueColor;
+
+            using (var pen = new Pen(color, 2F))
+            using (var path = new GraphicsPath())
+            {
+                pen.StartCap = LineCap.Round;
+                pen.EndCap = LineCap.Round;
+                pen.LineJoin = LineJoin.Round;
+                e.Graphics.DrawLine(pen, 12F, 17F, 12F, 22F);
+
+                path.StartFigure();
+                path.AddLine(9F, 10.76F, 9F, 7F);
+                path.AddBezier(9F, 7F, 9F, 6.45F, 8.55F, 6F, 8F, 6F);
+                path.AddBezier(8F, 6F, 6.9F, 6F, 6F, 5.1F, 6F, 4F);
+                path.AddBezier(6F, 4F, 6F, 2.9F, 6.9F, 2F, 8F, 2F);
+                path.AddLine(8F, 2F, 16F, 2F);
+                path.AddBezier(16F, 2F, 17.1F, 2F, 18F, 2.9F, 18F, 4F);
+                path.AddBezier(18F, 4F, 18F, 5.1F, 17.1F, 6F, 16F, 6F);
+                path.AddBezier(16F, 6F, 15.45F, 6F, 15F, 6.45F, 15F, 7F);
+                path.AddLine(15F, 7F, 15F, 10.76F);
+                path.AddBezier(15F, 10.76F, 15F, 11.52F, 15.43F, 12.2F, 16.11F, 12.55F);
+                path.AddLine(16.11F, 12.55F, 17.89F, 13.45F);
+                path.AddBezier(17.89F, 13.45F, 18.57F, 13.8F, 19F, 14.48F, 19F, 15.24F);
+                path.AddLine(19F, 15.24F, 19F, 16F);
+                path.AddBezier(19F, 16F, 19F, 16.55F, 18.55F, 17F, 18F, 17F);
+                path.AddLine(18F, 17F, 6F, 17F);
+                path.AddBezier(6F, 17F, 5.45F, 17F, 5F, 16.55F, 5F, 16F);
+                path.AddLine(5F, 16F, 5F, 15.24F);
+                path.AddBezier(5F, 15.24F, 5F, 14.48F, 5.43F, 13.8F, 6.11F, 13.45F);
+                path.AddLine(6.11F, 13.45F, 7.89F, 12.55F);
+                path.AddBezier(7.89F, 12.55F, 8.57F, 12.2F, 9F, 11.52F, 9F, 10.76F);
+                path.CloseFigure();
+                e.Graphics.DrawPath(pen, path);
+            }
+            e.Graphics.Restore(state);
+        }
+
         private void ResizeFileListColumns()
         {
             if (isInitializing) return;
@@ -633,6 +769,250 @@ namespace FileRenameTool
                 {
                     AddFiles(dialog.FileNames);
                 }
+            }
+        }
+
+        private void CreateBlankDocxButton_Click(object sender, EventArgs e)
+        {
+            if (!ValidateNamingInputs()) return;
+
+            var baseName = PromptForNewDocumentBaseName();
+            if (baseName == null) return;
+
+            using (var folderDialog = new FolderBrowserDialog())
+            {
+                folderDialog.Description = "选择空白 DOCX 文件的保存位置";
+                folderDialog.SelectedPath =
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
+
+                try
+                {
+                    var targetPath = BuildNewDocumentTargetPath(
+                        folderDialog.SelectedPath, baseName);
+                    CreateEmptyDocx(targetPath);
+                    SaveSettings(companyPrefix.Text.Trim());
+                    AddFiles(new[] { targetPath });
+                    MessageBox.Show(this,
+                        "已创建空白 DOCX：\r\n" + Path.GetFileName(targetPath),
+                        "创建完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "无法创建空白 DOCX：\r\n" + ex.Message,
+                        "创建失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        private string PromptForNewDocumentBaseName()
+        {
+            using (var dialog = new Form())
+            {
+                dialog.Text = "新建空白 DOCX";
+                dialog.StartPosition = FormStartPosition.CenterParent;
+                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dialog.MaximizeBox = false;
+                dialog.MinimizeBox = false;
+                dialog.ShowInTaskbar = false;
+                dialog.ClientSize = new Size(540, 188);
+                dialog.BackColor = PaperColor;
+                dialog.ForeColor = InkBlueColor;
+                dialog.Font = new Font("Microsoft YaHei UI", 9.5F);
+                dialog.Icon = Icon;
+                dialog.TopMost = TopMost;
+
+                var label = new Label
+                {
+                    AutoSize = true,
+                    Location = new Point(24, 26),
+                    Text = "文件名部分：",
+                    Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold)
+                };
+                var input = new TextBox
+                {
+                    Location = new Point(140, 21),
+                    Width = 372,
+                    MaxLength = 180,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    BackColor = Color.White,
+                    ForeColor = InkBlueColor
+                };
+                var hint = new Label
+                {
+                    AutoSize = true,
+                    Location = new Point(140, 56),
+                    Text = "只需输入文件名，程序会按当前命名选项生成 .docx 格式的空白文档",
+                    ForeColor = GrayBlueColor
+                };
+                var cancelButton = CreateButton("取消", 350, 126, 76);
+                cancelButton.Height = 38;
+                cancelButton.DialogResult = DialogResult.Cancel;
+                var createButton = CreateButton("选择位置并创建", 436, 126, 76);
+                createButton.Width = 76;
+                createButton.Height = 38;
+                createButton.Text = "下一步";
+                createButton.DialogResult = DialogResult.OK;
+                StyleAccentButton(createButton);
+
+                dialog.Controls.Add(label);
+                dialog.Controls.Add(input);
+                dialog.Controls.Add(hint);
+                dialog.Controls.Add(cancelButton);
+                dialog.Controls.Add(createButton);
+                dialog.AcceptButton = createButton;
+                dialog.CancelButton = cancelButton;
+                dialog.Layout += delegate
+                {
+                    var contentRight = dialog.ClientSize.Width - 28;
+                    input.Left = label.Right + 12;
+                    input.Width = Math.Max(260, contentRight - input.Left);
+                    hint.Left = input.Left;
+                    hint.MaximumSize = new Size(input.Width, 0);
+                    createButton.Left = contentRight - createButton.Width;
+                    cancelButton.Left = createButton.Left - cancelButton.Width - 10;
+                };
+                dialog.PerformLayout();
+
+                while (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    var value = input.Text.Trim();
+                    if (value.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+                        value = value.Substring(0, value.Length - 5).Trim();
+
+                    string validationMessage;
+                    if (TryValidateFileNamePart(value, out validationMessage))
+                        return value;
+
+                    MessageBox.Show(dialog, validationMessage, "文件名部分无效",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    dialog.DialogResult = DialogResult.None;
+                    input.Focus();
+                    input.SelectAll();
+                }
+            }
+            return null;
+        }
+
+        private string BuildNewDocumentTargetPath(string directory, string baseName)
+        {
+            var today = DateTime.Now.ToString("yyyyMMdd");
+            var extension = ".docx";
+            var major = 1;
+            var minor = 0;
+            var usesVersion = onlyKeepVersion.Checked || onlyKeepDateVersion.Checked ||
+                (!onlyKeepFileName.Checked && includeVersion.Checked);
+
+            while (true)
+            {
+                string targetName;
+                if (onlyKeepFileName.Checked)
+                {
+                    targetName = baseName + extension;
+                }
+                else if (onlyKeepVersion.Checked)
+                {
+                    targetName = String.Format("{0}-v{1}.{2}{3}",
+                        baseName, major, minor, extension);
+                }
+                else if (onlyKeepDateVersion.Checked)
+                {
+                    targetName = String.Format("{0}-{1}-v{2}.{3}{4}",
+                        baseName, today, major, minor, extension);
+                }
+                else
+                {
+                    var suffix = BuildVersionTypeSuffix(
+                        companyPrefix.Text.Trim(), versionType.Text.Trim());
+                    targetName = includeVersion.Checked
+                        ? String.Format("{0}-{1}-v{2}.{3}-{4}{5}",
+                            baseName, today, major, minor, suffix, extension)
+                        : String.Format("{0}-{1}-{2}{3}",
+                            baseName, today, suffix, extension);
+                }
+
+                var targetPath = Path.Combine(directory, targetName);
+                if (!File.Exists(targetPath)) return targetPath;
+                if (!usesVersion)
+                    throw new IOException("目标文件已存在，请更换文件名或保存位置。");
+                IncrementVersion(ref major, ref minor);
+            }
+        }
+
+        private static void CreateEmptyDocx(string targetPath)
+        {
+            if (File.Exists(targetPath)) throw new IOException("目标文件已存在。");
+
+            var timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            try
+            {
+                using (var stream = new FileStream(
+                    targetPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, false))
+                {
+                    WriteZipTextEntry(archive, "[Content_Types].xml",
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                    "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                    "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>" +
+                    "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
+                    "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>" +
+                    "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>" +
+                    "<Override PartName=\"/docProps/app.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.extended-properties+xml\"/>" +
+                    "</Types>");
+                    WriteZipTextEntry(archive, "_rels/.rels",
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>" +
+                    "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>" +
+                    "<Relationship Id=\"rId3\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties\" Target=\"docProps/app.xml\"/>" +
+                    "</Relationships>");
+                    WriteZipTextEntry(archive, "word/document.xml",
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                    "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                    "<w:body><w:p/><w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>" +
+                    "<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" " +
+                    "w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr></w:body></w:document>");
+                    WriteZipTextEntry(archive, "word/_rels/document.xml.rels",
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>");
+                    WriteZipTextEntry(archive, "docProps/core.xml",
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                    "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" " +
+                    "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " +
+                    "xmlns:dcterms=\"http://purl.org/dc/terms/\" " +
+                    "xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" " +
+                    "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">" +
+                    "<dc:title/><dc:creator>六朝声</dc:creator><cp:lastModifiedBy>FileRenameTool</cp:lastModifiedBy>" +
+                    "<dcterms:created xsi:type=\"dcterms:W3CDTF\">" + timestamp + "</dcterms:created>" +
+                    "<dcterms:modified xsi:type=\"dcterms:W3CDTF\">" + timestamp + "</dcterms:modified>" +
+                    "</cp:coreProperties>");
+                    WriteZipTextEntry(archive, "docProps/app.xml",
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+                    "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" " +
+                    "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">" +
+                        "<Application>FileRenameTool</Application><AppVersion>2.3</AppVersion></Properties>");
+                }
+            }
+            catch
+            {
+                try
+                {
+                    if (File.Exists(targetPath)) File.Delete(targetPath);
+                }
+                catch
+                {
+                    // 清理失败时保留原始异常，避免掩盖真正的创建错误。
+                }
+                throw;
+            }
+        }
+
+        private static void WriteZipTextEntry(ZipArchive archive, string entryName, string content)
+        {
+            var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+            using (var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false)))
+            {
+                writer.Write(content);
             }
         }
 
@@ -796,7 +1176,7 @@ namespace FileRenameTool
 
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var displayVersion = version == null
-                ? "v2.2"
+                ? "v2.3"
                 : String.Format("v{0}.{1}", version.Major, version.Minor);
             var dialog = new Form();
             dialog.SuspendLayout();
@@ -1002,15 +1382,17 @@ namespace FileRenameTool
         private List<RenamePreview> BuildPreviews()
         {
             if (onlyKeepFileName.Checked)
-                return BuildCleanupPreviews(false);
+                return BuildCleanupPreviews(CleanupMode.FileNameOnly);
             if (onlyKeepVersion.Checked)
-                return BuildCleanupPreviews(true);
+                return BuildCleanupPreviews(CleanupMode.FileNameAndVersion);
+            if (onlyKeepDateVersion.Checked)
+                return BuildCleanupPreviews(CleanupMode.FileNameDateAndVersion);
 
             var previews = new List<RenamePreview>();
             var reservedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var selectedType = versionType.Text.Trim();
             var selectedPrefix = companyPrefix.Text.Trim();
-            var suffix = selectedPrefix + selectedType;
+            var suffix = BuildVersionTypeSuffix(selectedPrefix, selectedType);
             var today = DateTime.Now.ToString("yyyyMMdd");
 
             var invalidStatus = String.Empty;
@@ -1142,7 +1524,26 @@ namespace FileRenameTool
             return previews;
         }
 
-        private List<RenamePreview> BuildCleanupPreviews(bool keepVersion)
+        private static string BuildVersionTypeSuffix(string prefix, string versionTypeText)
+        {
+            if (String.IsNullOrEmpty(prefix)) return versionTypeText;
+            if (String.IsNullOrEmpty(versionTypeText)) return prefix;
+            return prefix + (ContainsLatinLetter(versionTypeText) ? " " : String.Empty) +
+                versionTypeText;
+        }
+
+        private static bool ContainsLatinLetter(string value)
+        {
+            foreach (var character in value)
+            {
+                if ((character >= 'A' && character <= 'Z') ||
+                    (character >= 'a' && character <= 'z'))
+                    return true;
+            }
+            return false;
+        }
+
+        private List<RenamePreview> BuildCleanupPreviews(CleanupMode mode)
         {
             var previews = new List<RenamePreview>();
             var reservedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1166,12 +1567,22 @@ namespace FileRenameTool
                 var stem = RemoveCopySuffixes(Path.GetFileNameWithoutExtension(sourcePath));
                 string baseName;
                 string versionText;
-                if (keepVersion)
+                string dateText;
+                if (mode == CleanupMode.FileNameDateAndVersion)
+                {
+                    ExtractBaseNameDateAndVersionForCleanup(stem,
+                        out baseName, out dateText, out versionText);
+                }
+                else if (mode == CleanupMode.FileNameAndVersion)
+                {
                     ExtractBaseNameAndVersionForCleanup(stem, out baseName, out versionText);
+                    dateText = String.Empty;
+                }
                 else
                 {
                     baseName = ExtractBaseNameForCleanup(stem);
                     versionText = String.Empty;
+                    dateText = String.Empty;
                 }
 
                 baseName = GetManualBaseName(sourcePath, baseName);
@@ -1179,9 +1590,14 @@ namespace FileRenameTool
                 baseName = RemoveCopySuffixes(baseName.Trim());
                 if (String.IsNullOrWhiteSpace(baseName)) baseName = "未命名文件";
 
-                var targetName = keepVersion
-                    ? String.Format("{0}-{1}{2}", baseName, versionText, extension)
-                    : baseName + extension;
+                string targetName;
+                if (mode == CleanupMode.FileNameAndVersion)
+                    targetName = String.Format("{0}-{1}{2}", baseName, versionText, extension);
+                else if (mode == CleanupMode.FileNameDateAndVersion)
+                    targetName = String.Format("{0}-{1}-{2}{3}",
+                        baseName, dateText, versionText, extension);
+                else
+                    targetName = baseName + extension;
                 var targetPath = Path.Combine(directory, targetName);
                 var isSamePath = String.Equals(sourcePath, targetPath,
                     StringComparison.OrdinalIgnoreCase);
@@ -1207,7 +1623,11 @@ namespace FileRenameTool
                 }
                 else
                 {
-                    status = keepVersion ? "等待保留版本号" : "等待清理文件名";
+                    status = mode == CleanupMode.FileNameAndVersion
+                        ? "等待保留版本号"
+                        : mode == CleanupMode.FileNameDateAndVersion
+                            ? "等待保留日期和版本号"
+                            : "等待清理文件名";
                     canRename = true;
                 }
 
@@ -1224,6 +1644,63 @@ namespace FileRenameTool
             return previews;
         }
 
+        private static void ExtractBaseNameDateAndVersionForCleanup(string stem,
+            out string baseName, out string dateText, out string versionText)
+        {
+            var cleanedStem = RemoveCopySuffixes(stem);
+            var match = DateVersionNameRegex.Value.Match(cleanedStem);
+            if (!match.Success)
+                match = LegacyDateVersionNameRegex.Value.Match(cleanedStem);
+
+            if (match.Success)
+            {
+                baseName = match.Groups["base"].Value.Trim();
+                dateText = match.Groups["date"].Value;
+                versionText = FormatVersionText(
+                    match.Groups["major"].Value, match.Groups["minor"].Value);
+                return;
+            }
+
+            var noVersionMatch = NoVersionNameRegex.Value.Match(cleanedStem);
+            if (!noVersionMatch.Success)
+                noVersionMatch = LegacyNoVersionNameRegex.Value.Match(cleanedStem);
+            if (noVersionMatch.Success)
+            {
+                baseName = noVersionMatch.Groups["base"].Value.Trim();
+                dateText = noVersionMatch.Groups["date"].Value;
+                versionText = "v1.0";
+                return;
+            }
+
+            ExtractBaseNameAndVersionForCleanup(
+                cleanedStem, out baseName, out versionText);
+            dateText = DateTime.Now.ToString("yyyyMMdd");
+
+            var trailingDate = TrailingDateRegex.Value.Match(cleanedStem);
+            if (trailingDate.Success)
+            {
+                baseName = trailingDate.Groups["base"].Value.Trim();
+                dateText = cleanedStem.Substring(cleanedStem.Length - 8);
+            }
+            else
+            {
+                var leadingDate = LeadingDateRegex.Value.Match(cleanedStem);
+                if (leadingDate.Success)
+                {
+                    baseName = ExtractBaseNameForCleanup(
+                        leadingDate.Groups["base"].Value.Trim());
+                    dateText = cleanedStem.Substring(0, 8);
+                }
+            }
+        }
+
+        private static string FormatVersionText(string major, string minor)
+        {
+            if (String.Equals(minor, "x", StringComparison.OrdinalIgnoreCase))
+                minor = "X";
+            return String.Format("v{0}.{1}", major, minor);
+        }
+
         private static void ExtractBaseNameAndVersionForCleanup(string stem,
             out string baseName, out string versionText)
         {
@@ -1236,11 +1713,8 @@ namespace FileRenameTool
                 if (leadingDate.Success)
                     baseName = leadingDate.Groups["base"].Value.Trim();
 
-                var minor = match.Groups["minor"].Value;
-                if (String.Equals(minor, "x", StringComparison.OrdinalIgnoreCase))
-                    minor = "X";
-                versionText = String.Format("v{0}.{1}",
-                    match.Groups["major"].Value, minor);
+                versionText = FormatVersionText(
+                    match.Groups["major"].Value, match.Groups["minor"].Value);
                 return;
             }
 
@@ -1385,6 +1859,9 @@ namespace FileRenameTool
                     ? String.Format("共 {0} 个文件；将仅保留原始文件名和扩展名", sourceFiles.Count)
                     : onlyKeepVersion.Checked
                         ? String.Format("共 {0} 个文件；将保留文件名、版本号和扩展名", sourceFiles.Count)
+                        : onlyKeepDateVersion.Checked
+                            ? String.Format("共 {0} 个文件；将仅保留文件名、日期、版本号和扩展名",
+                                sourceFiles.Count)
                         : includeVersion.Checked
                         ? String.Format("共 {0} 个文件；包含版本号，重名时自动递增版本", sourceFiles.Count)
                         : String.Format("共 {0} 个文件；不含版本号，将更新已有日期和类型", sourceFiles.Count);
@@ -1482,7 +1959,8 @@ namespace FileRenameTool
 
         private bool ValidateNamingInputs()
         {
-            if (onlyKeepFileName.Checked || onlyKeepVersion.Checked) return true;
+            if (onlyKeepFileName.Checked || onlyKeepVersion.Checked ||
+                onlyKeepDateVersion.Checked) return true;
 
             var selectedPrefix = companyPrefix.Text.Trim();
             if (selectedPrefix.IndexOfAny(InvalidFileNameChars) >= 0)

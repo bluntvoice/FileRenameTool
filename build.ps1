@@ -1,10 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
-$version = 'v2.2'
+$version = 'v2.3'
 $sourcePath = Join-Path $PSScriptRoot 'FileRenameTool.cs'
 $iconPath = Join-Path $PSScriptRoot 'assets\brush.ico'
-$readmePath = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.md' |
-    Select-Object -First 1 -ExpandProperty FullName
+$readmePath = Join-Path $PSScriptRoot 'README.md'
 $outputPath = Join-Path $PSScriptRoot ("FileRenameTool-{0}.exe" -f $version)
 
 if (-not $readmePath) {
@@ -33,6 +32,7 @@ $parameters.CompilerOptions = '/target:winexe /optimize+ /win32icon:"{0}"' -f $i
 [void]$parameters.ReferencedAssemblies.Add('System.dll')
 [void]$parameters.ReferencedAssemblies.Add('System.Core.dll')
 [void]$parameters.ReferencedAssemblies.Add('System.Drawing.dll')
+[void]$parameters.ReferencedAssemblies.Add('System.IO.Compression.dll')
 [void]$parameters.ReferencedAssemblies.Add('System.Windows.Forms.dll')
 
 $result = $provider.CompileAssemblyFromSource($parameters, $source)
