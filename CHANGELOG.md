@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [2.4] - 2026-07-30
+
+### Changed
+
+- “仅保留版本号”和“仅保留文件名、日期和版本号”模式检测到已规范化的版本文件时，会直接生成下一版本预览。
+- “文件名-日期-文件类型-数字”格式会保留原日期和文件类型，并自动递增末尾数字。
+- 目标版本文件已存在或多个文件产生相同目标名称时，会继续递增版本号，直到找到可用名称。
+
+### Fixed
+
+- 修复“文件名-当日日期-版本号”格式再次拖入工具后版本号未自动更新，导致无法直接另存为新版本的问题。
+- 同步修复“文件名-版本号”格式在仅保留版本号模式下无法自动递增的问题。
+- 修复末尾使用独立数字编号的文件无法按照原格式连续递增的问题。
+
 ## [2.3] - 2026-07-29
 
 ### Added
@@ -49,7 +63,8 @@
 - 软件图标更新。
 - 更新公开说明，明确适用场景、使用方式和通用重命名工具推荐。
 
-[Unreleased]: https://github.com/bluntvoice/FileRenameTool/compare/v2.3...HEAD
+[Unreleased]: https://github.com/bluntvoice/FileRenameTool/compare/v2.4...HEAD
+[2.4]: https://github.com/bluntvoice/FileRenameTool/compare/v2.3...v2.4
 [2.3]: https://github.com/bluntvoice/FileRenameTool/compare/v2.2...v2.3
 [2.2]: https://github.com/bluntvoice/FileRenameTool/compare/v2.1...v2.2
 [2.1]: https://github.com/bluntvoice/FileRenameTool/compare/v2.0...v2.1
