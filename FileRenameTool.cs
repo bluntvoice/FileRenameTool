@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -15,9 +16,9 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("六朝声")]
 [assembly: AssemblyProduct("FileRenameTool")]
 [assembly: AssemblyCopyright("Copyright © 六朝声 2026")]
-[assembly: AssemblyVersion("2.4.0.0")]
-[assembly: AssemblyFileVersion("2.4.0.0")]
-[assembly: AssemblyInformationalVersion("2.4")]
+[assembly: AssemblyVersion("2.5.0.0")]
+[assembly: AssemblyFileVersion("2.5.0.0")]
+[assembly: AssemblyInformationalVersion("2.5")]
 
 namespace FileRenameTool
 {
@@ -29,22 +30,14 @@ namespace FileRenameTool
         public bool CanRename;
     }
 
-    internal enum CleanupMode
-    {
-        FileNameOnly,
-        FileNameAndVersion,
-        FileNameDateAndVersion
-    }
-
     internal sealed class MainForm : Form
     {
         private readonly ListView fileList;
         private readonly ComboBox versionType;
         private readonly ComboBox companyPrefix;
         private readonly CheckBox includeVersion;
+        private readonly CheckBox includeDate;
         private readonly CheckBox onlyKeepFileName;
-        private readonly CheckBox onlyKeepVersion;
-        private readonly CheckBox onlyKeepDateVersion;
         private readonly Label dropHint;
         private readonly Label summary;
         private readonly Button renameButton;
@@ -70,7 +63,6 @@ namespace FileRenameTool
         private string typeTextBeforeDropDown = String.Empty;
         private bool typeSelectionByKeyboard;
         private bool isInitializing = true;
-        private bool isUpdatingCleanupMode;
         private bool isExiting;
         private bool trayHintShown;
 
@@ -180,6 +172,20 @@ namespace FileRenameTool
         private static readonly Lazy<Regex> TrailingDateRegex = new Lazy<Regex>(delegate
         {
             return new Regex(@"^(?<base>.+)-\d{8}$", RegexOptions.CultureInvariant);
+        });
+
+        private static readonly Lazy<Regex> EmbeddedDateRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"(?<!\d)(?<date>\d{8}|\d{4}[-._]\d{2}[-._]\d{2})(?!\d)",
+                RegexOptions.CultureInvariant);
+        });
+
+        private static readonly Lazy<Regex> NamingSuffixRegex = new Lazy<Regex>(delegate
+        {
+            return new Regex(
+                @"(?:[-_.\s]*)?(?:英文修订版?|英文清洁版?|修订版?|清洁版?|审核版?|Reviewed\s+Version|Clean\s+Version)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         });
 
         private static readonly char[] InvalidFileNameChars = Path.GetInvalidFileNameChars();
@@ -362,7 +368,7 @@ namespace FileRenameTool
                 AutoSize = true,
                 Checked = true,
                 Text = "包含版本号",
-                Location = new Point(24, 140),
+                Location = new Point(278, 140),
                 ForeColor = InkBlueColor
             };
             includeVersion.CheckedChanged += delegate { RefreshPreview(); };
@@ -371,81 +377,42 @@ namespace FileRenameTool
             {
                 AutoSize = true,
                 Text = "仅保留文件名",
-                Location = new Point(150, 140),
+                Location = new Point(24, 140),
                 ForeColor = InkBlueColor
             };
 
-            onlyKeepVersion = new CheckBox
+            includeDate = new CheckBox
             {
                 AutoSize = true,
-                Text = "仅保留版本号",
-                Location = new Point(286, 140),
+                Checked = true,
+                Text = "包含日期",
+                Location = new Point(160, 140),
                 ForeColor = InkBlueColor
             };
-
-            onlyKeepDateVersion = new CheckBox
-            {
-                AutoSize = true,
-                Text = "仅保留文件名、日期和版本号",
-                Location = new Point(422, 140),
-                ForeColor = InkBlueColor
-            };
+            includeDate.CheckedChanged += delegate { RefreshPreview(); };
 
             var cleanupHint = new Label
             {
                 AutoSize = true,
                 ForeColor = GrayBlueColor,
-                Text = "三个清理模式互斥",
-                Location = new Point(650, 141)
+                Text = "日期和版本号可独立选择",
+                Location = new Point(404, 141)
             };
 
             Action updateCleanupControls = delegate
             {
-                var cleanupMode = onlyKeepFileName.Checked || onlyKeepVersion.Checked ||
-                    onlyKeepDateVersion.Checked;
+                var cleanupMode = onlyKeepFileName.Checked;
                 companyPrefix.Enabled = !cleanupMode;
                 versionType.Enabled = !cleanupMode;
-                includeVersion.Enabled = !cleanupMode;
                 rememberButton.Enabled = !cleanupMode;
                 rememberTypeButton.Enabled = !cleanupMode;
+                includeDate.Enabled = !cleanupMode;
+                includeVersion.Enabled = !cleanupMode;
+                cleanupHint.Enabled = !cleanupMode;
             };
             onlyKeepFileName.CheckedChanged += delegate
             {
-                if (isUpdatingCleanupMode) return;
-                isUpdatingCleanupMode = true;
-                if (onlyKeepFileName.Checked)
-                {
-                    onlyKeepVersion.Checked = false;
-                    onlyKeepDateVersion.Checked = false;
-                }
                 updateCleanupControls();
-                isUpdatingCleanupMode = false;
-                RefreshPreview();
-            };
-            onlyKeepVersion.CheckedChanged += delegate
-            {
-                if (isUpdatingCleanupMode) return;
-                isUpdatingCleanupMode = true;
-                if (onlyKeepVersion.Checked)
-                {
-                    onlyKeepFileName.Checked = false;
-                    onlyKeepDateVersion.Checked = false;
-                }
-                updateCleanupControls();
-                isUpdatingCleanupMode = false;
-                RefreshPreview();
-            };
-            onlyKeepDateVersion.CheckedChanged += delegate
-            {
-                if (isUpdatingCleanupMode) return;
-                isUpdatingCleanupMode = true;
-                if (onlyKeepDateVersion.Checked)
-                {
-                    onlyKeepFileName.Checked = false;
-                    onlyKeepVersion.Checked = false;
-                }
-                updateCleanupControls();
-                isUpdatingCleanupMode = false;
                 RefreshPreview();
             };
 
@@ -508,10 +475,9 @@ namespace FileRenameTool
             topPanel.Controls.Add(saveCopyButton);
             topPanel.Controls.Add(createDocxButton);
             topPanel.Controls.Add(dropHint);
-            topPanel.Controls.Add(includeVersion);
             topPanel.Controls.Add(onlyKeepFileName);
-            topPanel.Controls.Add(onlyKeepVersion);
-            topPanel.Controls.Add(onlyKeepDateVersion);
+            topPanel.Controls.Add(includeDate);
+            topPanel.Controls.Add(includeVersion);
             topPanel.Controls.Add(cleanupHint);
             topPanel.Controls.Add(manualBaseNameLabel);
             topPanel.Controls.Add(manualBaseName);
@@ -528,10 +494,9 @@ namespace FileRenameTool
                 versionType.Left = typeLabel.Right + 8;
                 rememberTypeButton.Left = versionType.Right + 12;
                 typeHint.Left = rememberTypeButton.Right + 12;
-                onlyKeepFileName.Left = includeVersion.Right + 18;
-                onlyKeepVersion.Left = onlyKeepFileName.Right + 18;
-                onlyKeepDateVersion.Left = onlyKeepVersion.Right + 18;
-                cleanupHint.Left = onlyKeepDateVersion.Right + 18;
+                includeDate.Left = onlyKeepFileName.Right + 18;
+                includeVersion.Left = includeDate.Right + 18;
+                cleanupHint.Left = includeVersion.Right + 18;
                 manualBaseName.Left = manualBaseNameLabel.Right + 8;
                 applyBaseNameButton.Left = manualBaseName.Right + 12;
                 resetBaseNameButton.Left = applyBaseNameButton.Right + 12;
@@ -921,8 +886,7 @@ namespace FileRenameTool
             var extension = ".docx";
             var major = 1;
             var minor = 0;
-            var usesVersion = onlyKeepVersion.Checked || onlyKeepDateVersion.Checked ||
-                (!onlyKeepFileName.Checked && includeVersion.Checked);
+            var usesVersion = !onlyKeepFileName.Checked && includeVersion.Checked;
 
             while (true)
             {
@@ -931,25 +895,14 @@ namespace FileRenameTool
                 {
                     targetName = baseName + extension;
                 }
-                else if (onlyKeepVersion.Checked)
-                {
-                    targetName = String.Format("{0}-v{1}.{2}{3}",
-                        baseName, major, minor, extension);
-                }
-                else if (onlyKeepDateVersion.Checked)
-                {
-                    targetName = String.Format("{0}-{1}-v{2}.{3}{4}",
-                        baseName, today, major, minor, extension);
-                }
                 else
                 {
                     var suffix = BuildVersionTypeSuffix(
                         companyPrefix.Text.Trim(), versionType.Text.Trim());
-                    targetName = includeVersion.Checked
-                        ? String.Format("{0}-{1}-v{2}.{3}-{4}{5}",
-                            baseName, today, major, minor, suffix, extension)
-                        : String.Format("{0}-{1}-{2}{3}",
-                            baseName, today, suffix, extension);
+                    targetName = BuildOptionalName(baseName, today,
+                        String.Format("v{0}.{1}", major, minor),
+                        includeDate.Checked, includeVersion.Checked) +
+                        "-" + suffix + extension;
                 }
 
                 var targetPath = Path.Combine(directory, targetName);
@@ -1011,7 +964,7 @@ namespace FileRenameTool
                     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
                     "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" " +
                     "xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">" +
-                        "<Application>FileRenameTool</Application><AppVersion>2.4</AppVersion></Properties>");
+                    "<Application>FileRenameTool</Application><AppVersion>2.5</AppVersion></Properties>");
                 }
             }
             catch
@@ -1197,7 +1150,7 @@ namespace FileRenameTool
 
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var displayVersion = version == null
-                ? "v2.4"
+                ? "v2.5"
                 : String.Format("v{0}.{1}", version.Major, version.Minor);
             var dialog = new Form();
             dialog.SuspendLayout();
@@ -1403,11 +1356,7 @@ namespace FileRenameTool
         private List<RenamePreview> BuildPreviews()
         {
             if (onlyKeepFileName.Checked)
-                return BuildCleanupPreviews(CleanupMode.FileNameOnly);
-            if (onlyKeepVersion.Checked)
-                return BuildCleanupPreviews(CleanupMode.FileNameAndVersion);
-            if (onlyKeepDateVersion.Checked)
-                return BuildCleanupPreviews(CleanupMode.FileNameDateAndVersion);
+                return BuildCleanupPreviews(false, false);
 
             var previews = new List<RenamePreview>();
             var reservedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1505,9 +1454,7 @@ namespace FileRenameTool
                 }
                 else
                 {
-                    var dated = Regex.Match(stem, @"^\d{8}-(?<base>.+)$");
-                    if (dated.Success)
-                        baseName = dated.Groups["base"].Value.Trim();
+                    baseName = ExtractBaseNameForCleanup(stem);
                 }
 
                 baseName = GetManualBaseName(sourcePath, baseName);
@@ -1522,11 +1469,10 @@ namespace FileRenameTool
                         targetName = String.Format("{0}-{1}-{2}-{3}{4}",
                             baseName, sequenceDate, sequenceType, sequence, extension);
                     else
-                        targetName = includeVersion.Checked
-                            ? String.Format("{0}-{1}-v{2}.{3}-{4}{5}",
-                                baseName, today, major, minor, suffix, extension)
-                            : String.Format("{0}-{1}-{2}{3}",
-                                baseName, today, suffix, extension);
+                        targetName = BuildOptionalName(baseName, today,
+                            String.Format("v{0}.{1}", major, minor),
+                            includeDate.Checked, includeVersion.Checked) +
+                            "-" + suffix + extension;
                     targetPath = Path.Combine(directory, targetName);
 
                     var occupiedByOtherFile = File.Exists(targetPath) &&
@@ -1570,6 +1516,16 @@ namespace FileRenameTool
             return previews;
         }
 
+        private static string BuildOptionalName(string baseName, string dateText,
+            string versionText, bool addDate, bool addVersion)
+        {
+            var parts = new List<string>();
+            parts.Add(baseName);
+            if (addDate) parts.Add(dateText);
+            if (addVersion) parts.Add(versionText);
+            return String.Join("-", parts.ToArray());
+        }
+
         private static string BuildVersionTypeSuffix(string prefix, string versionTypeText)
         {
             if (String.IsNullOrEmpty(prefix)) return versionTypeText;
@@ -1589,10 +1545,11 @@ namespace FileRenameTool
             return false;
         }
 
-        private List<RenamePreview> BuildCleanupPreviews(CleanupMode mode)
+        private List<RenamePreview> BuildCleanupPreviews(bool addDate, bool addVersion)
         {
             var previews = new List<RenamePreview>();
             var reservedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var today = DateTime.Now.ToString("yyyyMMdd");
 
             foreach (var sourcePath in sourceFiles)
             {
@@ -1613,30 +1570,12 @@ namespace FileRenameTool
                 var stem = RemoveCopySuffixes(Path.GetFileNameWithoutExtension(sourcePath));
                 string baseName;
                 string versionText;
-                string dateText;
                 var versionAdvanced = false;
-                var versionMode = mode == CleanupMode.FileNameAndVersion ||
-                    mode == CleanupMode.FileNameDateAndVersion;
-                if (mode == CleanupMode.FileNameDateAndVersion)
-                {
-                    ExtractBaseNameDateAndVersionForCleanup(stem,
-                        out baseName, out dateText, out versionText);
-                }
-                else if (mode == CleanupMode.FileNameAndVersion)
-                {
-                    ExtractBaseNameAndVersionForCleanup(stem, out baseName, out versionText);
-                    dateText = String.Empty;
-                }
-                else
-                {
-                    baseName = ExtractBaseNameForCleanup(stem);
-                    versionText = String.Empty;
-                    dateText = String.Empty;
-                }
+                ExtractBaseNameAndVersionForCleanup(stem, out baseName, out versionText);
 
                 int versionMajor;
                 int versionMinor;
-                if (TryParseNormalizedCleanupVersion(stem, mode,
+                if (addVersion && TryParseNormalizedCleanupVersion(stem, addDate,
                     out versionMajor, out versionMinor))
                 {
                     IncrementVersion(ref versionMajor, ref versionMinor);
@@ -1649,6 +1588,7 @@ namespace FileRenameTool
                     versionMajor = 1;
                     versionMinor = 0;
                 }
+                if (!addVersion) versionText = String.Empty;
 
                 baseName = GetManualBaseName(sourcePath, baseName);
 
@@ -1661,14 +1601,8 @@ namespace FileRenameTool
                 bool duplicated;
                 while (true)
                 {
-                    string targetName;
-                    if (mode == CleanupMode.FileNameAndVersion)
-                        targetName = String.Format("{0}-{1}{2}", baseName, versionText, extension);
-                    else if (mode == CleanupMode.FileNameDateAndVersion)
-                        targetName = String.Format("{0}-{1}-{2}{3}",
-                            baseName, dateText, versionText, extension);
-                    else
-                        targetName = baseName + extension;
+                    var targetName = BuildOptionalName(baseName, today, versionText,
+                        addDate, addVersion) + extension;
 
                     targetPath = Path.Combine(directory, targetName);
                     isSamePath = String.Equals(sourcePath, targetPath,
@@ -1676,7 +1610,7 @@ namespace FileRenameTool
                     occupied = !isSamePath && File.Exists(targetPath);
                     duplicated = !isSamePath && reservedTargets.Contains(targetPath);
 
-                    if (versionMode && (occupied || duplicated))
+                    if (addVersion && (occupied || duplicated))
                     {
                         IncrementVersion(ref versionMajor, ref versionMinor);
                         versionText = String.Format("v{0}.{1}", versionMajor, versionMinor);
@@ -1707,11 +1641,13 @@ namespace FileRenameTool
                 {
                     status = versionAdvanced
                         ? "等待更新版本号"
-                        : mode == CleanupMode.FileNameAndVersion
-                            ? "等待保留版本号"
-                            : mode == CleanupMode.FileNameDateAndVersion
-                                ? "等待保留日期和版本号"
-                                : "等待清理文件名";
+                        : addDate && addVersion
+                            ? "等待保留日期和版本号"
+                            : addDate
+                                ? "等待保留日期"
+                                : addVersion
+                                    ? "等待保留版本号"
+                                    : "等待清理文件名";
                     canRename = true;
                 }
 
@@ -1728,20 +1664,12 @@ namespace FileRenameTool
             return previews;
         }
 
-        private static bool TryParseNormalizedCleanupVersion(string stem, CleanupMode mode,
+        private static bool TryParseNormalizedCleanupVersion(string stem, bool addDate,
             out int major, out int minor)
         {
-            Match match;
-            if (mode == CleanupMode.FileNameAndVersion)
-                match = FileNameVersionOnlyRegex.Value.Match(stem);
-            else if (mode == CleanupMode.FileNameDateAndVersion)
-                match = FileNameDateVersionOnlyRegex.Value.Match(stem);
-            else
-            {
-                major = 1;
-                minor = 0;
-                return false;
-            }
+            var match = addDate
+                ? FileNameDateVersionOnlyRegex.Value.Match(stem)
+                : FileNameVersionOnlyRegex.Value.Match(stem);
 
             if (!match.Success)
             {
@@ -1772,56 +1700,6 @@ namespace FileRenameTool
             return true;
         }
 
-        private static void ExtractBaseNameDateAndVersionForCleanup(string stem,
-            out string baseName, out string dateText, out string versionText)
-        {
-            var cleanedStem = RemoveCopySuffixes(stem);
-            var match = DateVersionNameRegex.Value.Match(cleanedStem);
-            if (!match.Success)
-                match = LegacyDateVersionNameRegex.Value.Match(cleanedStem);
-
-            if (match.Success)
-            {
-                baseName = match.Groups["base"].Value.Trim();
-                dateText = match.Groups["date"].Value;
-                versionText = FormatVersionText(
-                    match.Groups["major"].Value, match.Groups["minor"].Value);
-                return;
-            }
-
-            var noVersionMatch = NoVersionNameRegex.Value.Match(cleanedStem);
-            if (!noVersionMatch.Success)
-                noVersionMatch = LegacyNoVersionNameRegex.Value.Match(cleanedStem);
-            if (noVersionMatch.Success)
-            {
-                baseName = noVersionMatch.Groups["base"].Value.Trim();
-                dateText = noVersionMatch.Groups["date"].Value;
-                versionText = "v1.0";
-                return;
-            }
-
-            ExtractBaseNameAndVersionForCleanup(
-                cleanedStem, out baseName, out versionText);
-            dateText = DateTime.Now.ToString("yyyyMMdd");
-
-            var trailingDate = TrailingDateRegex.Value.Match(cleanedStem);
-            if (trailingDate.Success)
-            {
-                baseName = trailingDate.Groups["base"].Value.Trim();
-                dateText = cleanedStem.Substring(cleanedStem.Length - 8);
-            }
-            else
-            {
-                var leadingDate = LeadingDateRegex.Value.Match(cleanedStem);
-                if (leadingDate.Success)
-                {
-                    baseName = ExtractBaseNameForCleanup(
-                        leadingDate.Groups["base"].Value.Trim());
-                    dateText = cleanedStem.Substring(0, 8);
-                }
-            }
-        }
-
         private static string FormatVersionText(string major, string minor)
         {
             if (String.Equals(minor, "x", StringComparison.OrdinalIgnoreCase))
@@ -1836,7 +1714,7 @@ namespace FileRenameTool
             var match = GenericVersionNameRegex.Value.Match(cleanedStem);
             if (match.Success)
             {
-                baseName = match.Groups["base"].Value.Trim();
+                baseName = ExtractBaseNameForCleanup(match.Groups["base"].Value.Trim());
                 var leadingDate = LeadingDateRegex.Value.Match(baseName);
                 if (leadingDate.Success)
                     baseName = leadingDate.Groups["base"].Value.Trim();
@@ -1889,7 +1767,54 @@ namespace FileRenameTool
             if (leadingDate.Success)
                 baseName = leadingDate.Groups["base"].Value;
 
+            string withoutDate;
+            string ignoredDate;
+            if (TryRemoveEmbeddedDate(baseName, out withoutDate, out ignoredDate))
+                baseName = withoutDate;
+
+            baseName = RemoveKnownNamingSuffix(baseName);
+
             return RemoveCopySuffixes(baseName.Trim());
+        }
+
+        private static bool TryRemoveEmbeddedDate(string value,
+            out string cleanedValue, out string normalizedDate)
+        {
+            foreach (Match match in EmbeddedDateRegex.Value.Matches(value ?? String.Empty))
+            {
+                var dateDigits = Regex.Replace(match.Groups["date"].Value, @"\D", String.Empty);
+                DateTime parsedDate;
+                if (!DateTime.TryParseExact(dateDigits, "yyyyMMdd",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedDate))
+                    continue;
+
+                var withoutDate = value.Remove(match.Index, match.Length);
+                cleanedValue = NormalizeBaseNameSeparators(withoutDate);
+                cleanedValue = RemoveKnownNamingSuffix(cleanedValue);
+                cleanedValue = NormalizeBaseNameSeparators(cleanedValue);
+                normalizedDate = dateDigits;
+                return true;
+            }
+
+            cleanedValue = value;
+            normalizedDate = String.Empty;
+            return false;
+        }
+
+        private static string RemoveKnownNamingSuffix(string value)
+        {
+            var result = value ?? String.Empty;
+            while (NamingSuffixRegex.Value.IsMatch(result))
+                result = NamingSuffixRegex.Value.Replace(result, String.Empty);
+            return NormalizeBaseNameSeparators(result);
+        }
+
+        private static string NormalizeBaseNameSeparators(string value)
+        {
+            var result = value ?? String.Empty;
+            result = Regex.Replace(result, @"[（(]\s*[）)]|[\[【]\s*[\]】]", String.Empty);
+            result = Regex.Replace(result, @"[\s._-]{2,}", "-");
+            return result.Trim(' ', '-', '_', '.', '(', ')', '（', '）', '[', ']', '【', '】');
         }
 
         private static bool TryParseStandardName(string stem, out string baseName,
@@ -1984,15 +1909,9 @@ namespace FileRenameTool
             summary.Text = sourceFiles.Count == 0
                 ? "尚未添加文件，可拖入文件或点击“添加文件”"
                 : onlyKeepFileName.Checked
-                    ? String.Format("共 {0} 个文件；将仅保留原始文件名和扩展名", sourceFiles.Count)
-                    : onlyKeepVersion.Checked
-                        ? String.Format("共 {0} 个文件；将保留文件名、版本号和扩展名", sourceFiles.Count)
-                        : onlyKeepDateVersion.Checked
-                            ? String.Format("共 {0} 个文件；将仅保留文件名、日期、版本号和扩展名",
-                                sourceFiles.Count)
-                        : includeVersion.Checked
-                        ? String.Format("共 {0} 个文件；包含版本号，重名时自动递增版本", sourceFiles.Count)
-                        : String.Format("共 {0} 个文件；不含版本号，将更新已有日期和类型", sourceFiles.Count);
+                    ? String.Format("共 {0} 个文件；将仅保留文件名和扩展名", sourceFiles.Count)
+                    : String.Format("共 {0} 个文件；{1}", sourceFiles.Count,
+                        BuildStandardSummary(includeDate.Checked, includeVersion.Checked));
             UpdateRenameButtonState();
             UpdateSelectionActions();
         }
@@ -2087,8 +2006,7 @@ namespace FileRenameTool
 
         private bool ValidateNamingInputs()
         {
-            if (onlyKeepFileName.Checked || onlyKeepVersion.Checked ||
-                onlyKeepDateVersion.Checked) return true;
+            if (onlyKeepFileName.Checked) return true;
 
             var selectedPrefix = companyPrefix.Text.Trim();
             if (selectedPrefix.IndexOfAny(InvalidFileNameChars) >= 0)
@@ -2117,6 +2035,15 @@ namespace FileRenameTool
                 return false;
             }
             return true;
+        }
+
+        private static string BuildStandardSummary(bool addDate, bool addVersion)
+        {
+            if (addDate && addVersion)
+                return "包含日期和版本号，重名时自动递增版本";
+            if (addDate) return "包含日期，不含版本号";
+            if (addVersion) return "包含版本号，不含日期，重名时自动递增版本";
+            return "不含日期和版本号";
         }
 
         private void SaveCopyButton_Click(object sender, EventArgs e)

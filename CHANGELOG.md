@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [2.5] - 2026-07-31
+
+### Added
+
+- 新增“包含日期”独立选项，在常规命名中可与“包含版本号”自由组合。
+- 日期识别支持连续八位日期、下划线、括号和 `YYYY-MM-DD`、`YYYY_MM_DD`、`YYYY.MM.DD` 等常见形式。
+
+### Changed
+
+- 将原有多个固定清理模式合并为“仅保留文件名”；该模式优先级最高，始终只保留文件名和扩展名。
+- “仅保留文件名”启用时禁用日期、版本号、公司简称和文件类型控件，避免选项含义冲突。
+- 普通重命名和空白 DOCX 创建统一遵循当前日期、版本号组合。
+
+### Fixed
+
+- 修复“文件名-日期修订”等日期与版本类型文字紧贴时，旧日期无法识别并更新的问题。
+- 无效的八位数字不再被误判为日期，避免意外删除文件名内容。
+
 ## [2.4] - 2026-07-30
 
 ### Changed
@@ -63,7 +81,8 @@
 - 软件图标更新。
 - 更新公开说明，明确适用场景、使用方式和通用重命名工具推荐。
 
-[Unreleased]: https://github.com/bluntvoice/FileRenameTool/compare/v2.4...HEAD
+[Unreleased]: https://github.com/bluntvoice/FileRenameTool/compare/v2.5...HEAD
+[2.5]: https://github.com/bluntvoice/FileRenameTool/compare/v2.4...v2.5
 [2.4]: https://github.com/bluntvoice/FileRenameTool/compare/v2.3...v2.4
 [2.3]: https://github.com/bluntvoice/FileRenameTool/compare/v2.2...v2.3
 [2.2]: https://github.com/bluntvoice/FileRenameTool/compare/v2.1...v2.2

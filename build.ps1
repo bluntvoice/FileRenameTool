@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$version = 'v2.4'
+$version = 'v2.5'
 $sourcePath = Join-Path $PSScriptRoot 'FileRenameTool.cs'
 $iconPath = Join-Path $PSScriptRoot 'assets\brush.ico'
 $readmePath = Join-Path $PSScriptRoot 'README.md'
