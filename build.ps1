@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$version = 'v2.5'
+$version = 'v2.6'
 $sourcePath = Join-Path $PSScriptRoot 'FileRenameTool.cs'
 $iconPath = Join-Path $PSScriptRoot 'assets\brush.ico'
 $readmePath = Join-Path $PSScriptRoot 'README.md'
@@ -22,26 +22,32 @@ if (Test-Path -LiteralPath $outputPath) {
     Remove-Item -LiteralPath $outputPath -Force
 }
 
-$source = Get-Content -LiteralPath $sourcePath -Raw -Encoding UTF8
-$provider = New-Object Microsoft.CSharp.CSharpCodeProvider
-$parameters = New-Object System.CodeDom.Compiler.CompilerParameters
-$parameters.GenerateExecutable = $true
-$parameters.GenerateInMemory = $false
-$parameters.OutputAssembly = $outputPath
-$parameters.CompilerOptions = '/target:winexe /optimize+ /win32icon:"{0}"' -f $iconPath
-[void]$parameters.ReferencedAssemblies.Add('System.dll')
-[void]$parameters.ReferencedAssemblies.Add('System.Core.dll')
-[void]$parameters.ReferencedAssemblies.Add('System.Drawing.dll')
-[void]$parameters.ReferencedAssemblies.Add('System.IO.Compression.dll')
-[void]$parameters.ReferencedAssemblies.Add('System.Windows.Forms.dll')
+$cscCandidates = @(
+    (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+    (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+)
+$cscPath = $cscCandidates | Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+if (-not $cscPath) {
+    throw 'Microsoft .NET Framework C# compiler was not found.'
+}
 
-$result = $provider.CompileAssemblyFromSource($parameters, $source)
-$provider.Dispose()
-if ($result.Errors.HasErrors) {
-    $messages = $result.Errors | ForEach-Object {
-        '{0}({1},{2}): {3}' -f $_.FileName, $_.Line, $_.Column, $_.ErrorText
-    }
-    throw ($messages -join [Environment]::NewLine)
+$compilerArguments = @(
+    '/nologo',
+    '/target:winexe',
+    '/optimize+',
+    "/win32icon:$iconPath",
+    "/out:$outputPath",
+    '/reference:System.dll',
+    '/reference:System.Core.dll',
+    '/reference:System.Drawing.dll',
+    '/reference:System.IO.Compression.dll',
+    '/reference:System.Windows.Forms.dll',
+    $sourcePath
+)
+& $cscPath @compilerArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "C# compilation failed with exit code $LASTEXITCODE."
 }
 
 Write-Host "Build completed: $outputPath"

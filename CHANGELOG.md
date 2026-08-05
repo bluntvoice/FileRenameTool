@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [2.6] - 2026-08-05
+
+### Added
+
+- 新增“包含版本类型”选项，可与日期、版本号独立组合；取消后不再输出公司简称和版本类型。
+- 默认版本类型新增 `Revised Version`，并排列在 `Reviewed Version` 下方。
+
+### Changed
+
+- “仅保留文件名”继续保持最高优先级，启用时忽略并禁用日期、版本号和版本类型选项。
+- 空白 DOCX 创建与普通重命名统一遵循“包含版本类型”设置。
+
+### Fixed
+
+- 修复只有“文件名-日期-版本类型”等不完整命名时，旧日期可能无法识别和更新的问题。
+- 完善不同文件扩展名及无扩展名文件的日期、版本号和版本类型识别，输出始终保留原扩展名。
+- 无效的八位数字日期不再误触发旧命名规则。
+
 ## [2.5] - 2026-07-31
 
 ### Added
@@ -14,7 +32,7 @@
 ### Changed
 
 - 将原有多个固定清理模式合并为“仅保留文件名”；该模式优先级最高，始终只保留文件名和扩展名。
-- “仅保留文件名”启用时禁用日期、版本号、公司简称和文件类型控件，避免选项含义冲突。
+- “仅保留文件名”启用时禁用日期、版本号、公司简称和版本类型控件，避免选项含义冲突。
 - 普通重命名和空白 DOCX 创建统一遵循当前日期、版本号组合。
 
 ### Fixed
@@ -27,7 +45,7 @@
 ### Changed
 
 - “仅保留版本号”和“仅保留文件名、日期和版本号”模式检测到已规范化的版本文件时，会直接生成下一版本预览。
-- “文件名-日期-文件类型-数字”格式会保留原日期和文件类型，并自动递增末尾数字。
+- “文件名-日期-版本类型-数字”格式会保留原日期和版本类型，并自动递增末尾数字。
 - 目标版本文件已存在或多个文件产生相同目标名称时，会继续递增版本号，直到找到可用名称。
 
 ### Fixed
@@ -81,7 +99,8 @@
 - 软件图标更新。
 - 更新公开说明，明确适用场景、使用方式和通用重命名工具推荐。
 
-[Unreleased]: https://github.com/bluntvoice/FileRenameTool/compare/v2.5...HEAD
+[Unreleased]: https://github.com/bluntvoice/FileRenameTool/compare/v2.6...HEAD
+[2.6]: https://github.com/bluntvoice/FileRenameTool/compare/v2.5...v2.6
 [2.5]: https://github.com/bluntvoice/FileRenameTool/compare/v2.4...v2.5
 [2.4]: https://github.com/bluntvoice/FileRenameTool/compare/v2.3...v2.4
 [2.3]: https://github.com/bluntvoice/FileRenameTool/compare/v2.2...v2.3
