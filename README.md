@@ -8,6 +8,16 @@ FileRenameTool 是一款面向多轮修订文件的轻量命名工具，适用�
 
 完整的结构化更新记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
+## 界面预览
+
+主界面：
+
+![FileRenameTool 主界面](./docs/images/file-rename-main.jpg)
+
+版本类型选择：
+
+![FileRenameTool 版本类型选择](./docs/images/file-rename-version-type.jpg)
+
 ## 命名规则
 
 默认格式：`文件名-YYYYMMDD-v版本号-版本类型.扩展名`
