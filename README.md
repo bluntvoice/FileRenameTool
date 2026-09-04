@@ -2,6 +2,9 @@
 
 FileRenameTool 是一款面向多轮修订文件的轻量命名工具，适用于合同、制度、方案、报告等需要反复修改并保留多个版本的文件。软件针对日期、版本号、版本类型和公司简称等常见命名要素进行了适配，可自动识别已有版本、递增版本号、清理旧命名并保留原文件扩展名，帮助个人和团队保持文件名称清晰一致。
 
+[![GitHub Release](https://img.shields.io/github/v/release/bluntvoice/FileRenameTool)](https://github.com/bluntvoice/FileRenameTool/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/bluntvoice/FileRenameTool/total)](https://github.com/bluntvoice/FileRenameTool/releases)
+
 如果需要正则匹配、批量替换、文件整理等更通用的重命名功能，推荐使用 [OncePower](https://github.com/ilgnefz/once_power)。
 
 双击最新版 [FileRenameTool-v2.6.exe](./FileRenameTool-v2.6.exe) 即可使用，无需安装其他插件。复制给其他人时，只需复制这个 EXE 文件。
